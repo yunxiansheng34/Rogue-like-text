@@ -77,3 +77,68 @@ VS：打开文件夹 → 配置 `x64-release` → 启动项 `mygametext.exe` →
 ## 备份
 
 `_backup_课程main前/`（原来的 mygametext.cpp/h）、`_backup_CMakeLists_当前可用/`
+## 发布版开关（PRODUCTION_BUILD）
+
+控制 `main.cpp` 里这段：
+
+```cpp
+#if PRODUCTION_BUILD == 1
+    SetTraceLogLevel(LOG_NONE);   // 关掉 raylib 的 INFO 日志
+#endif
+```
+
+| 配置 | 当前值 | 效果 |
+|---|---|---|
+| `x64-release` | **ON** | 运行时不打印任何 raylib 日志 |
+| `x64-debug` | OFF | 保留日志，方便排查 |
+
+### 切换方式
+
+**方式 1：VS 界面**
+
+CMake 概述 → 切到 `x64-release` → 找 `PRODUCTION_BUILD` → 改成 `ON` → 保存（自动重配）。
+
+**方式 2：命令行**
+
+```bat
+cmake --preset x64-release -DPRODUCTION_BUILD=ON
+cmake --build --preset x64-release
+```
+
+**方式 3：一键脚本**
+
+```powershell
+.\tools\set_production.ps1                 # x64-release 打开
+.\tools\set_production.ps1 -Value OFF      # 关掉
+.\tools\set_production.ps1 -Preset x64-debug -Value ON
+```
+
+三种方式改的都是同一份 `out/build/<preset>/CMakeCache.txt`，互相同步。
+
+> ⚠️ 不要用「删除缓存并重新配置」来让它生效——那会把 `PRODUCTION_BUILD` 重置回默认 `OFF`。
+
+## 控制台窗口（HIDE_CONSOLE）
+
+运行时会弹出一个黑窗口，因为 exe 默认是**控制台子系统**。
+`SetTraceLogLevel(LOG_NONE)` 只关日志内容，**不关窗口**。
+
+| 配置 | PRODUCTION_BUILD | HIDE_CONSOLE | 结果 |
+|---|---|---|---|
+| `x64-debug` | OFF | OFF | 有黑窗口 + 完整日志（开发用） |
+| `x64-release` | **ON** | **ON** | **无黑窗口 + 无日志**（发布用） |
+
+切换：
+
+```bat
+cmake --preset x64-release -DHIDE_CONSOLE=ON
+cmake --build --preset x64-release
+```
+
+> 开了 HIDE_CONSOLE 后 stdout 就没有接收端了，`std::cout` 的内容（比如按钮打印）看不到。
+> 需要的话改成写文件日志。
+
+验证子系统（2 = GUI，3 = 控制台）：
+
+```bat
+dumpbin /headers out\build\x64-release\mygametext\Release\mygametext.exe | findstr subsystem
+```

@@ -1,4 +1,4 @@
-﻿# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # mygametext 的可执行目标配置
 #   1. raylib 用工程内源码（ThirdParty/raylib-6.2）
 #   2. ImGui 1.93 用 D:\libs\imgui-1.93.0
@@ -61,6 +61,17 @@ if (MSVC)
     target_compile_options(rlimgui PRIVATE /utf-8)
 endif()
 
+# ---------------- 生产构建开关 ----------------
+# ON  = 发布版：main.cpp 里 SetTraceLogLevel(LOG_NONE)，raylib 的 INFO 日志全部消失
+# OFF = 开发版：保留日志，方便排查
+option(PRODUCTION_BUILD "ON = 发布版（关闭 raylib 调试日志）" OFF)
+
+# ON  = 编译成 GUI 程序（Windows 子系统），运行时不弹控制台黑窗口
+# OFF = 控制台程序，能看 raylib 日志和自己的 std::cout
+option(HIDE_CONSOLE "ON = 隐藏控制台窗口（GUI 子系统）" OFF)
+
+message(STATUS "PRODUCTION_BUILD = ${PRODUCTION_BUILD}   HIDE_CONSOLE = ${HIDE_CONSOLE}")
+
 # ---------------- 链接 ----------------
 # 让 src/ 里的头文件可以直接 #include "xxx.h"
 target_include_directories(mygametext PRIVATE
@@ -69,9 +80,23 @@ target_include_directories(mygametext PRIVATE
 
 target_link_libraries(mygametext PRIVATE raylib rlimgui)
 
+# 隐藏控制台：把子系统从 CONSOLE 改成 WINDOWS
+# /ENTRY:mainCRTStartup 是为了继续用 int main()（否则链接器会去找 WinMain）
+if (HIDE_CONSOLE AND MSVC)
+    target_link_options(mygametext PRIVATE
+        "/SUBSYSTEM:WINDOWS"
+        "/ENTRY:mainCRTStartup")
+endif()
+
 if (MSVC)
     target_compile_options(mygametext PRIVATE /utf-8)
     target_compile_definitions(mygametext PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+    if (PRODUCTION_BUILD)
+        target_compile_definitions(mygametext PRIVATE PRODUCTION_BUILD=1)
+    else()
+        target_compile_definitions(mygametext PRIVATE PRODUCTION_BUILD=0)
+    endif()
 endif()
 
 # TODO: 如有需要，请添加测试并安装目标。

@@ -26,10 +26,9 @@
 
 int main(int argc, char** argv)
 {
-	bool shot = false;
-	for (int i = 1; i < argc; i++)
-		if (strcmp(argv[i], "--shot") == 0) shot = true;
-
+#if PRODUCTION_BUILD == 1
+	SetTraceLogLevel(LOG_NONE);
+#endif
 	SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 	InitWindow(1280, 720, "window name");   // 课程是 800x450，但 FontScale=2 放不下，故放大
 	SetTargetFPS(120);
@@ -82,13 +81,6 @@ int main(int argc, char** argv)
 		// ImGui::PopStyleColor(2);
 	#pragma endregion
 
-		Color c;
-		c.r = 255;
-		c.g = 0;
-		c.b = 200;
-		c.a = 255;
-
-		DrawText("Congrats! You created your first window!", 190, 200, 20, c);
 
 		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(440, 200), ImGuiCond_FirstUseEver);
@@ -121,18 +113,15 @@ int main(int argc, char** argv)
 		ImGui::End();
 
 		ImGui::ShowDemoWindow();
-
+		if (!updateGame()) {
+			CloseWindow();
+		}
 	#pragma region imgui
 		rlImGuiEnd();
 
 	#pragma endregion
 
 		EndDrawing();
-
-		if (shot && ++frameCounter == 30) {
-			TakeScreenshot("mygametext_shot.png");
-			break;
-		}
 	}
 
 	closeGame();
