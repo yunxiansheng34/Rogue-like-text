@@ -31,7 +31,7 @@ int main(int argc, char** argv)
 #endif
 	SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 	InitWindow(1280, 720, "window name");   // 课程是 800x450，但 FontScale=2 放不下，故放大
-	SetTargetFPS(120);
+	SetTargetFPS(240);
 
 #pragma region imgui
 	// 1.93 是动态字体图集：中文字体通过回调注册，必须在 Setup 之前
@@ -61,7 +61,7 @@ int main(int argc, char** argv)
 	while (!WindowShouldClose())
 	{
 		BeginDrawing();
-		ClearBackground(RAYWHITE);
+		ClearBackground(BLACK);
 
 	#pragma region imgui
 		rlImGuiBegin();
