@@ -3,6 +3,7 @@
 #   1. raylib 用工程内源码（ThirdParty/raylib-6.2）
 #   2. ImGui 1.93 用 D:\libs\imgui-1.93.0
 #   3. 后端用 rlImGui main 分支（支持 1.93；内部处理输入，走 rlgl 绘制）
+#   4. 资源路径宏 RESOURCES_PATH：来自课件 10-资源管理器 的做法
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -10,7 +11,6 @@
 #   - 以后在 mygametext/ 或 mygametext/src/ 里新增 .cpp，不需要改这个文件
 #   - CONFIGURE_DEPENDS 让 CMake 在文件增删后自动重新配置
 # ---------------------------------------------------------------------------
-# 源码统一放在 src/ 下（可在 src/ 里再建子目录）
 file(GLOB_RECURSE MY_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
 if (NOT MY_SOURCES)
@@ -62,21 +62,44 @@ if (MSVC)
 endif()
 
 # ---------------- 生产构建开关 ----------------
-# ON  = 发布版：main.cpp 里 SetTraceLogLevel(LOG_NONE)，raylib 的 INFO 日志全部消失
-# OFF = 开发版：保留日志，方便排查
-option(PRODUCTION_BUILD "ON = 发布版（关闭 raylib 调试日志）" OFF)
+# PRODUCTION_BUILD：
+#   ON  = 发布版：raylib 日志关掉（main.cpp 的 SetTraceLogLevel），
+#                 RESOURCES_PATH 变成相对 exe 的 "./resources/"
+#   OFF = 开发版：保留日志，RESOURCES_PATH 用绝对路径，IDE 里直接能跑
+option(PRODUCTION_BUILD "ON = 发布版（关闭日志、资源走 exe 同级目录）" OFF)
 
-# ON  = 编译成 GUI 程序（Windows 子系统），运行时不弹控制台黑窗口
-# OFF = 控制台程序，能看 raylib 日志和自己的 std::cout
-option(HIDE_CONSOLE "ON = 隐藏控制台窗口（GUI 子系统）" OFF)
+# HIDE_CONSOLE：
+#   ON  = 编译成 GUI 程序（Windows 子系统），运行时不弹控制台黑窗口
+#   OFF = 控制台程序，能看 raylib 日志和自己的 std::cout
+# 默认跟随 PRODUCTION_BUILD（课件里发布版就是无控制台的）
+option(HIDE_CONSOLE "ON = 隐藏控制台窗口（GUI 子系统）" ${PRODUCTION_BUILD})
 
 message(STATUS "PRODUCTION_BUILD = ${PRODUCTION_BUILD}   HIDE_CONSOLE = ${HIDE_CONSOLE}")
+
+# ---------------- 资源路径（课件 10-资源管理器 的做法） ----------------
+# 代码里用 RESOURCES_PATH 拼路径，例如：
+#     std::string p = std::string(RESOURCES_PATH) + "player/idle.png";
+# 注意结尾自带 "/"，拼的时候不要再加。
+if (PRODUCTION_BUILD)
+    # 发布版：exe 同级的 ./resources/，整个文件夹跟着 exe 一起拷走
+    target_compile_definitions(mygametext PRIVATE RESOURCES_PATH="./resources/")
+    target_compile_definitions(mygametext PRIVATE PRODUCTION_BUILD=1)
+    message(STATUS "RESOURCES_PATH = ./resources/  （相对 exe）")
+else()
+    # 开发版：用源码目录的绝对路径，在 IDE 里 F5 也能找到资源
+    target_compile_definitions(mygametext PRIVATE
+        RESOURCES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/resources/")
+    target_compile_definitions(mygametext PRIVATE PRODUCTION_BUILD=0)
+    message(STATUS "RESOURCES_PATH = ${CMAKE_CURRENT_SOURCE_DIR}/resources/  （绝对路径）")
+endif()
 
 # ---------------- 链接 ----------------
 # 让 src/ 里的头文件可以直接 #include "xxx.h"
 target_include_directories(mygametext PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gameplayer")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gameplayer"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform"      # 课件里的平台层
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gameLayer")    # 课件里的游戏层
 
 target_link_libraries(mygametext PRIVATE raylib rlimgui)
 
@@ -91,12 +114,15 @@ endif()
 if (MSVC)
     target_compile_options(mygametext PRIVATE /utf-8)
     target_compile_definitions(mygametext PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
-    if (PRODUCTION_BUILD)
-        target_compile_definitions(mygametext PRIVATE PRODUCTION_BUILD=1)
-    else()
-        target_compile_definitions(mygametext PRIVATE PRODUCTION_BUILD=0)
-    endif()
+# ---------------- 发布版把 resources/ 拷到 exe 旁边 ----------------
+if (PRODUCTION_BUILD)
+    add_custom_command(TARGET mygametext POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+            "$<TARGET_FILE_DIR:mygametext>/resources"
+        COMMENT "复制 resources/ 到 exe 目录（发布版）")
 endif()
 
 # TODO: 如有需要，请添加测试并安装目标。

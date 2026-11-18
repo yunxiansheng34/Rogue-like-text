@@ -142,3 +142,44 @@ cmake --build --preset x64-release
 ```bat
 dumpbin /headers out\build\x64-release\mygametext\Release\mygametext.exe | findstr subsystem
 ```
+
+## 资源路径（RESOURCES_PATH，来自课件 10-资源管理器）
+
+CMake 会按构建类型注入两个宏：
+
+| 配置 | RESOURCES_PATH | PRODUCTION_BUILD | 说明 |
+|---|---|---|---|
+| `x64-debug` | `"D:/visual studio test project/mygametext/mygametext/resources/"` | 0 | 绝对路径，IDE 里 F5 直接能找到资源 |
+| `x64-release` | `"./resources/"` | 1 | 相对 exe，发布时整个文件夹跟着 exe 走 |
+
+代码里这样用（结尾自带 `/`，不要再加）：
+
+```cpp
+#include <string>
+
+std::string texPath = std::string(RESOURCES_PATH) + "player/idle.png";
+Texture2D t = LoadTexture(texPath.c_str());
+```
+
+发布版构建时会自动把 `mygametext/resources/` 复制到 exe 旁边（`add_custom_command POST_BUILD`），
+所以 `./resources/` 一定能找到。
+
+验证方式（CMake 配置阶段会打印）：
+
+```
+-- RESOURCES_PATH = ./resources/  （相对 exe）
+-- RESOURCES_PATH = D:/.../mygametext/resources/  （绝对路径）
+```
+
+## 目录约定（课件 10 章结构）
+
+```
+mygametext/src/
+  main.cpp
+  gameplayer/
+  platform/      ← 平台层（资源管理器、输入等）
+  gameLayer/     ← 游戏层
+mygametext/resources/   ← 资源（代码里用 RESOURCES_PATH 拼）
+```
+
+`src/platform` 和 `src/gameLayer` 已经加进头文件搜索路径，`#include "xxx.h"` 直接可用。
