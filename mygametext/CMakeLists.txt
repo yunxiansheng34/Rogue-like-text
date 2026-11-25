@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 # mygametext 的可执行目标配置
 #   1. raylib 用工程内源码（ThirdParty/raylib-6.2）
 #   2. ImGui 1.93 用 D:\libs\imgui-1.93.0
@@ -29,6 +29,10 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build raylib as static"   FORCE)
 
 add_subdirectory("${CMAKE_SOURCE_DIR}/ThirdParty/raylib-6.2"
                  "${CMAKE_BINARY_DIR}/thirdparty/raylib")
+
+# ---------------- FastNoiseSIMD（16-4 起用于地形/洞穴噪声） ----------------
+add_subdirectory("${CMAKE_SOURCE_DIR}/ThirdParty/FastNoiseSIMD"
+                 "${CMAKE_BINARY_DIR}/thirdparty/fastnoise")
 
 # ---------------- ImGui 1.93 核心 ----------------
 set(IMGUI_DIR "D:/libs/imgui-1.93.0" CACHE PATH "imgui 源码目录")
@@ -101,7 +105,7 @@ target_include_directories(mygametext PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform"      # 课件里的平台层
     "${CMAKE_CURRENT_SOURCE_DIR}/src/gameLayer")    # 课件里的游戏层
 
-target_link_libraries(mygametext PRIVATE raylib rlimgui)
+target_link_libraries(mygametext PRIVATE raylib rlimgui fastNoiseSIMD)
 
 # 隐藏控制台：把子系统从 CONSOLE 改成 WINDOWS
 # /ENTRY:mainCRTStartup 是为了继续用 int main()（否则链接器会去找 WinMain）

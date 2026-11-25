@@ -39,3 +39,14 @@ Block* GameMap::getBlockSafe(int x, int y)
 	// 原来写的是 &GameData[...]，GameData 根本不存在，应该是 mapData
 	return &mapData[static_cast<size_t>(x) + static_cast<size_t>(y) * w];
 }
+
+// ---------------------------------------------------------------- 图集取块
+Rectangle getTextureAtlas(int type, int row, int tileW, int tileH)
+{
+	return Rectangle{
+		(float)(type * tileW),
+		(float)(row * tileH),
+		(float)tileW,
+		(float)tileH
+	};
+}

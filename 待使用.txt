@@ -1,0 +1,117 @@
+1.
+if (assetManager.dirt.id != 0)
+{
+	DrawTexturePro(
+		assetManager.dirt,
+		Rectangle{ 0.0f, 0.0f,
+		           (float)assetManager.dirt.width,
+		           (float)assetManager.dirt.height },
+		Rectangle{ 50.0f, 50.0f, 100.0f, 100.0f },
+		Vector2{ 0.0f, 0.0f },
+		0.0f,
+		WHITE);
+}
+
+2.
+	// ---------------------------------------------------------------- 放置与破坏
+	s_breakCd -= deltaTime;
+	s_placeCd -= deltaTime;
+
+	// 滚轮切换手持方块（跳过 air）
+	float wheel = GetMouseWheelMove();
+	if (wheel != 0.0f)
+	{
+		int t = s_holdBlock + ((wheel > 0.0f) ? -1 : 1);
+		if (t <= Block::air) { t = Block::BLOCKS_COUNT - 1; }
+		if (t >= Block::BLOCKS_COUNT) { t = Block::air + 1; }
+		s_holdBlock = t;
+	}
+
+	// 鼠标压在 ImGui 面板上时不要动地图，否则拖滑块会挖出一串洞
+	const bool mouseOnUI = ImGui::GetIO().WantCaptureMouse;
+
+	if (!mouseOnUI)
+	{
+		Block* b = gameData.gameMap.getBlockSafe(blockX, blockY);
+
+		// 左键：挖掉（按住就连续挖）
+		if (b && b->type != Block::air &&
+			IsMouseButtonDown(MOUSE_BUTTON_LEFT) && s_breakCd <= 0.0f)
+		{
+			*b = {};                       // 清空 = type 变回 air
+			s_breakCd = kActionInterval;
+		}
+
+		// 右键：放置（只往空气格里放，不覆盖已有方块）
+		if (b && b->type == Block::air &&
+			IsMouseButtonDown(MOUSE_BUTTON_RIGHT) && s_placeCd <= 0.0f)
+		{
+			b->type = (std::uint16_t)s_holdBlock;
+			s_placeCd = kActionInterval;
+		}
+	}
+
+	// ---------------------------------------------------------------- 绘制
+	BeginMode2D(gameData.camera);
+
+	for (int y = 0; y < gameData.gameMap.h; y++)
+	{
+		for (int x = 0; x < gameData.gameMap.w; x++)
+		{
+			auto& b = gameData.gameMap.getBlocUnsafe(x, y);
+			if (b.type != Block::air) {
+				Rectangle textureUV;
+				textureUV.width = 32;
+				textureUV.height = 32;
+				textureUV.x = (float)(b.type * 32);
+				textureUV.y = 0;
+				DrawTexturePro(
+					assetManager.textures,
+					textureUV,
+					{ (float)x,(float)y,1,1 },
+					{ 0,0 },
+					0.0f,
+					WHITE
+				);
+			}
+		}
+	}
+
+	// 鼠标所在的格子边框：整个画面只画一次，而且必须在相机模式里画
+	DrawTexturePro(
+		assetManager.frame,
+		{ 0,0,(float)assetManager.frame.width,(float)assetManager.frame.height },
+		{ (float)blockX,(float)blockY,1,1 },
+		{ 0,0 },
+		0.0f,
+		WHITE
+	);
+
+	// EndMode2D 必须在所有世界坐标绘制之后、循环之外调用一次
+	EndMode2D();
+
+	// ---------------------------------------------------------------- 操作面板
+	ImGui::SetNextWindowPos(ImVec2(GetScreenWidth() - 320.0f, 20.0f), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(300, 170), ImGuiCond_FirstUseEver);
+	ImGui::Begin("blocks");
+	ImGui::Text("手持: %s", kBlockNames[s_holdBlock]);
+	ImGui::Text("格子: (%d, %d)", blockX, blockY);
+	ImGui::SliderInt("方块", &s_holdBlock, Block::air + 1, Block::BLOCKS_COUNT - 1);
+	ImGui::Separator();
+	ImGui::TextDisabled("左键 挖掉 / 右键 放置");
+	ImGui::TextDisabled("滚轮 切换方块 / 方向键 移动视角");
+	ImGui::End();
+
+	return true;
+}
+3.
+std::uint32_t seed = 1234;
+void setSeed(std::uint32_t s){
+        seed = s;
+}
+
+std:: uint32_t  getRandomNumber(){
+        1664525u * seed + 1013904223u;
+         return seed;
+}
+

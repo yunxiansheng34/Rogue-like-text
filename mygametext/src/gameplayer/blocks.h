@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 
 struct Block {
@@ -61,4 +61,10 @@ struct Block {
 		BLOCKS_COUNT,
 	};
 	std::uint16_t type = 0;
+
+	// 读档 / 生成后把越界的类型拉回空气，防止图集 UV 越界
+	void sanitize()
+	{
+		if (type >= BLOCKS_COUNT) { type = 0; }
+	}
 };

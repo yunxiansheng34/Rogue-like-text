@@ -22,7 +22,7 @@
 
 #include <string.h>
 
-#include "gameplayer/playermain.h"   // 游戏模块（在 src/gameplayer/ 下）
+#include "gameplayer/gamemain.h"   // 游戏模块（在 src/gameplayer/ 下）
 
 int main(int argc, char** argv)
 {
@@ -82,40 +82,16 @@ int main(int argc, char** argv)
 	#pragma endregion
 
 
-		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(440, 200), ImGuiCond_FirstUseEver);
-		ImGui::Begin("test");
+		// 课程 7 的演示窗口与 ShowDemoWindow 已注释：
+		// 现在是游戏本体，HUD / 小地图由 gamemain.cpp 负责。
+		//
+		// ImGui::Begin("test");  ...  ImGui::End();
+		// ImGui::Begin("second window");  ...  ImGui::End();
+		// ImGui::ShowDemoWindow();
+		//
+		// 这里原来还有一次 if (!updateGame()) { CloseWindow(); }
+		// 是重复调用，会让逻辑每帧跑两遍，已删除。
 
-		ImGui::Text("hello");
-
-		if (ImGui::Button("button"))
-		{
-			std::cout << "Text\n";
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("button2"))
-		{
-			std::cout << "Different button\n";
-		}
-
-		ImGui::End();
-
-		ImGui::SetNextWindowPos(ImVec2(20, 340), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(440, 180), ImGuiCond_FirstUseEver);
-		ImGui::Begin("second window");
-
-		ImGui::Text("hello");
-		ImGui::Separator();
-		ImGui::NewLine();
-		static float a = 0;
-		ImGui::SliderFloat("slider", &a, 0, 1);
-
-		ImGui::End();
-
-		ImGui::ShowDemoWindow();
-		if (!updateGame()) {
-			CloseWindow();
-		}
 	#pragma region imgui
 		rlImGuiEnd();
 
