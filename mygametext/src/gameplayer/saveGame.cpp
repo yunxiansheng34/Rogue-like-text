@@ -1,4 +1,4 @@
-#include "saveGame.h"
+﻿#include "saveGame.h"
 #include "blocks.h"
 
 #include <cstdint>
@@ -10,7 +10,7 @@
 namespace
 {
 	const char kMagic[4] = { 'R', 'G', 'S', 'V' };
-	const int  kVersion = 3;          // 3 = 地图 + 玩家 + 迷雾 + 校验和
+	const int  kVersion = 5;          // 5 = 增加章节进度与 Boss 标记
 
 	template <typename T>
 	void writePod(std::ofstream& f, const T& v) { f.write((const char*)&v, sizeof(T)); }
@@ -22,7 +22,6 @@ namespace
 		return (bool)f;
 	}
 
-	// FNV-1a，用来检测存档被截断/被外部改坏
 	std::uint32_t fnv1a(const void* data, size_t len, std::uint32_t h = 2166136261u)
 	{
 		const unsigned char* p = (const unsigned char*)data;
@@ -39,14 +38,12 @@ bool saveGame(GameMap& map, const SaveSnapshot& s, const char* path)
 {
 	if (map.w <= 0 || map.h <= 0) { return false; }
 
-	// 先写临时文件，成功后再替换正式档：中途崩溃也不会毁掉老档
 	std::string tmp = std::string(path) + ".tmp";
 
 	std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
 	if (!f.is_open()) { return false; }
 
 	std::uint32_t sum = 2166136261u;
-
 	auto writeChecked = [&](const void* p, size_t n)
 	{
 		f.write((const char*)p, n);
@@ -55,7 +52,10 @@ bool saveGame(GameMap& map, const SaveSnapshot& s, const char* path)
 
 	f.write(kMagic, sizeof(kMagic));
 	writePod(f, kVersion);
+
 	writeChecked(&s.floor, sizeof(s.floor));
+	writeChecked(&s.act, sizeof(s.act));
+	writeChecked(&s.floorInAct, sizeof(s.floorInAct));
 	writeChecked(&s.kills, sizeof(s.kills));
 	writeChecked(&s.coins, sizeof(s.coins));
 	writeChecked(&s.hp, sizeof(s.hp));
@@ -77,15 +77,36 @@ bool saveGame(GameMap& map, const SaveSnapshot& s, const char* path)
 		writeChecked(&e, sizeof(e));
 	}
 
-	writePod(f, sum);          // 校验和自己不参与计算
+	// 敌人
+	int enemyCount = (int)s.enemies.size();
+	writeChecked(&enemyCount, sizeof(enemyCount));
+	for (const auto& e : s.enemies)
+	{
+		writeChecked(&e.x, sizeof(e.x));
+		writeChecked(&e.y, sizeof(e.y));
+		writeChecked(&e.hp, sizeof(e.hp));
+		writeChecked(&e.type, sizeof(e.type));
+		writeChecked(&e.boss, sizeof(e.boss));
+	}
+
+	// 金币
+	int coinCount = (int)s.coinsOnFloor.size();
+	writeChecked(&coinCount, sizeof(coinCount));
+	for (const auto& c : s.coinsOnFloor)
+	{
+		writeChecked(&c.x, sizeof(c.x));
+		writeChecked(&c.y, sizeof(c.y));
+		writeChecked(&c.bob, sizeof(c.bob));
+	}
+
+	writePod(f, sum);
 	f.close();
 
 	if (!f) { std::remove(tmp.c_str()); return false; }
 
-	// 旧档留一份 .bak，再让新档上位（同一分区 rename 是原子的）
 	std::string bak = std::string(path) + ".bak";
 	std::remove(bak.c_str());
-	std::rename(path, bak.c_str());          // 老档不存在时失败，忽略即可
+	std::rename(path, bak.c_str());
 
 	if (std::rename(tmp.c_str(), path) != 0) { return false; }
 
@@ -116,7 +137,10 @@ bool loadGame(GameMap& map, SaveSnapshot& s, const char* path)
 	Vector2 pos{ 1.5f, 1.5f };
 	int w = 0, h = 0;
 
-	if (!readChecked(&floor, sizeof(floor)) || !readChecked(&kills, sizeof(kills)) ||
+	int act = 1, floorInAct = 1;
+	if (!readChecked(&floor, sizeof(floor)) ||
+	    !readChecked(&act, sizeof(act)) || !readChecked(&floorInAct, sizeof(floorInAct)) ||
+	    !readChecked(&kills, sizeof(kills)) ||
 	    !readChecked(&coins, sizeof(coins)) || !readChecked(&hp, sizeof(hp)) ||
 	    !readChecked(&pos, sizeof(pos)) ||
 	    !readChecked(&w, sizeof(w)) || !readChecked(&h, sizeof(h)))
@@ -140,10 +164,44 @@ bool loadGame(GameMap& map, SaveSnapshot& s, const char* path)
 	std::vector<unsigned char> explored((size_t)w * h, 0);
 	if (!readChecked(explored.data(), explored.size())) { return false; }
 
+	int enemyCount = 0;
+	if (!readChecked(&enemyCount, sizeof(enemyCount))) { return false; }
+	if (enemyCount < 0 || enemyCount > 100000) { return false; }
+
+	std::vector<SavedEnemy> enemies;
+	enemies.reserve((size_t)enemyCount);
+	for (int i = 0; i < enemyCount; i++)
+	{
+		SavedEnemy e;
+		if (!readChecked(&e.x, sizeof(e.x)) || !readChecked(&e.y, sizeof(e.y)) ||
+		    !readChecked(&e.hp, sizeof(e.hp)) || !readChecked(&e.type, sizeof(e.type)) ||
+		    !readChecked(&e.boss, sizeof(e.boss)))
+		{
+			return false;
+		}
+		enemies.push_back(e);
+	}
+
+	int coinCount = 0;
+	if (!readChecked(&coinCount, sizeof(coinCount))) { return false; }
+	if (coinCount < 0 || coinCount > 100000) { return false; }
+
+	std::vector<SavedCoin> coinsOnFloor;
+	coinsOnFloor.reserve((size_t)coinCount);
+	for (int i = 0; i < coinCount; i++)
+	{
+		SavedCoin c;
+		if (!readChecked(&c.x, sizeof(c.x)) || !readChecked(&c.y, sizeof(c.y)) ||
+		    !readChecked(&c.bob, sizeof(c.bob)))
+		{
+			return false;
+		}
+		coinsOnFloor.push_back(c);
+	}
+
 	std::uint32_t fileSum = 0;
 	if (!readPod(f, fileSum)) { return false; }
-
-	if (fileSum != sum) { return false; }    // 数据被改坏，拒绝加载
+	if (fileSum != sum) { return false; }
 
 	// 校验通过才动内存
 	map.w = w;
@@ -151,11 +209,15 @@ bool loadGame(GameMap& map, SaveSnapshot& s, const char* path)
 	map.mapData.swap(blocks);
 
 	s.floor = floor;
+	s.act = act;
+	s.floorInAct = floorInAct;
 	s.kills = kills;
 	s.coins = coins;
 	s.hp = hp;
 	s.playerPos = pos;
 	s.explored.swap(explored);
+	s.enemies.swap(enemies);
+	s.coinsOnFloor.swap(coinsOnFloor);
 
 	f.close();
 	return true;

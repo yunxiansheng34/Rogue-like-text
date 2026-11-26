@@ -51,7 +51,9 @@ namespace
 	{
 		Vector2 pos = {};
 		int hp = 30;
+		int maxHp = 30;
 		int type = 0;            // 0~3 → e1~e4
+		bool boss = false;
 		float anim = 0.0f;
 		float hurt = 0.0f;
 	};
@@ -79,7 +81,16 @@ namespace
 	std::vector<Enemy> gEnemies;
 	std::vector<Coin> gCoins;
 
-	int gFloor = 1;
+	// 章节结构：3 章 × 3 层，第 3 层是章节 Boss；第 4 章 = 最终 Boss
+	constexpr int kFloorsPerAct = 3;
+	constexpr int kActs = 3;
+
+	int gAct = 1;            // 1..3 = 普通章节，4 = 最终 Boss
+	int gFloorInAct = 1;     // 1..3
+	bool gVictory = false;
+	float gBossHpMax = 0.0f; // 只用于 HUD 血条
+
+	int gFloor = 1;          // 全局层数（存档 / 难度曲线用）
 	int gKills = 0;
 	bool gDead = false;
 	float gMsgTimer = 0.0f;
@@ -161,22 +172,51 @@ namespace
 
 	void setMsg(const char* m, float t = 2.0f)
 	{
-		gMsg = m;
+		// 一定要复制：TextFormat 返回的是 raylib 的静态缓冲区，
+		// 之后任何 DrawFPS/TextFormat 调用都会把它的内容冲掉。
+		static char sBuf[160];
+		snprintf(sBuf, sizeof(sBuf), "%s", m);
+		gMsg = sBuf;
 		gMsgTimer = t;
 	}
 
-	void spawnEntities(int floorIndex);   // 前置声明（doLoad 会用）
+	void spawnEntities(int act, int floorInAct);   // 前置声明（doLoad 会用）
+	void enterFloor(int act, int floorInAct);
+	bool isBossFloor(int floorInAct) { return floorInAct >= kFloorsPerAct; }
 
 	// ---------------------------------------------------------------- 存 / 读档
 	void doSave(bool silent = false)
 	{
 		SaveSnapshot snap;
 		snap.floor = gFloor;
+		snap.act = gAct;
+		snap.floorInAct = gFloorInAct;
 		snap.kills = gKills;
 		snap.coins = gPlayer.coins;
 		snap.hp = gPlayer.hp;
 		snap.playerPos = gPlayer.pos;
 		snap.explored = gExplored;
+
+		snap.enemies.clear();
+		snap.enemies.reserve(gEnemies.size());
+		for (const auto& e : gEnemies)
+		{
+			SavedEnemy se;
+			se.x = e.pos.x; se.y = e.pos.y;
+			se.hp = e.hp;
+			se.type = e.type;
+			se.boss = e.boss ? 1 : 0;
+			snap.enemies.push_back(se);
+		}
+
+		snap.coinsOnFloor.clear();
+		snap.coinsOnFloor.reserve(gCoins.size());
+		for (const auto& c : gCoins)
+		{
+			SavedCoin sc;
+			sc.x = c.pos.x; sc.y = c.pos.y; sc.bob = c.bob;
+			snap.coinsOnFloor.push_back(sc);
+		}
 
 		if (saveGame(gMap, snap, kSavePath))
 		{
@@ -198,6 +238,8 @@ namespace
 		}
 
 		gFloor = snap.floor;
+		gAct = (snap.act >= 1) ? snap.act : 1;
+		gFloorInAct = (snap.floorInAct >= 1) ? snap.floorInAct : 1;
 		gKills = snap.kills;
 		gPlayer.pos = snap.playerPos;
 		gPlayer.hp = snap.hp;
@@ -210,8 +252,31 @@ namespace
 		gExplored.assign(n, 0);
 		if ((int)snap.explored.size() == n) { gExplored = snap.explored; }
 
-		// 敌人与金币不入档，按当前层重新铺
-		spawnEntities(gFloor);
+		// 敌人与金币从存档还原
+		gEnemies.clear();
+		gCoins.clear();
+
+		for (const auto& se : snap.enemies)
+		{
+			Enemy e;
+			e.pos = { se.x, se.y };
+			e.hp = se.hp;
+			e.maxHp = se.hp;
+			e.type = se.type;
+			e.boss = (se.boss != 0);
+			if (e.boss) { gBossHpMax = (float)e.hp; }
+			gEnemies.push_back(e);
+		}
+		for (const auto& sc : snap.coinsOnFloor)
+		{
+			Coin c;
+			c.pos = { sc.x, sc.y };
+			c.bob = sc.bob;
+			gCoins.push_back(c);
+		}
+
+		// 空档（比如刚生成的层还没存）兜底
+		if (gEnemies.empty() && gCoins.empty()) { spawnEntities(gAct, gFloorInAct); }
 
 		lastPX = -999;
 		lastPY = -999;
@@ -225,17 +290,21 @@ namespace
 	}
 
 	// ---------------------------------------------------------------- 铺敌人与金币
-	void spawnEntities(int floorIndex)
+	void spawnEntities(int act, int floorInAct)
 	{
 		gEnemies.clear();
 		gCoins.clear();
+		gBossHpMax = 0.0f;
 
 		Vector2 spawn = gPlayer.pos;
+		bool bossFloor = isBossFloor(floorInAct);
 
-		int enemyCount = 3 + floorIndex;
+		// ---- 普通杂兵：章节越深越多越硬 ----
+		int enemyCount = (bossFloor ? 1 : 2) + act + floorInAct;
 		for (int i = 0; i < enemyCount; i++)
 		{
 			int tx = 1, ty = 1;
+			bool placed = false;
 			for (int tries = 0; tries < 300; tries++)
 			{
 				tx = 1 + rand() % (gMap.w - 2);
@@ -244,17 +313,39 @@ namespace
 				if (!b || b->type != Block::air) { continue; }
 				Vector2 p{ tx + 0.5f, ty + 0.5f };
 				if (dist2(p, spawn) < 36.0f) { continue; }
+				placed = true;
 				break;
 			}
+			if (!placed) { continue; }
 
 			Enemy e;
 			e.pos = { tx + 0.5f, ty + 0.5f };
-			e.type = i % 4;
-			e.hp = 30 + (floorIndex - 1) * 8;
+			e.type = (act - 1 + i) % 4;
+			e.maxHp = 24 + act * 12 + floorInAct * 6;
+			e.hp = e.maxHp;
 			gEnemies.push_back(e);
 		}
 
-		for (int i = 0; i < 40; i++)
+		// ---- 章节 Boss：第 3 层 & 最终层 ----
+		if (bossFloor)
+		{
+			Enemy b;
+			b.boss = true;
+			b.type = (act <= 3) ? (act - 1) : 3;
+			b.maxHp = (act <= 3) ? (260 + act * 140) : 1600;
+			b.hp = b.maxHp;
+			b.pos = { spawn.x, spawn.y - 6.0f };   // 落在玩家上方，进画面
+
+			Block* bb = gMap.getBlockSafe((int)b.pos.x, (int)b.pos.y);
+			if (!bb || bb->type != Block::air) { b.pos = spawn; b.pos.y -= 3.0f; }
+
+			gBossHpMax = (float)b.maxHp;
+			gEnemies.push_back(b);
+		}
+
+		// ---- 金币 ----
+		int coinCount = bossFloor ? 6 : 40;
+		for (int i = 0; i < coinCount; i++)
 		{
 			int tx = 1 + rand() % (gMap.w - 2);
 			int ty = 1 + rand() % (gMap.h - 2);
@@ -264,62 +355,70 @@ namespace
 		}
 	}
 
-	// ---------------------------------------------------------------- 生成一层
-	void resetFloor(int floorIndex)
+	// ---------------------------------------------------------------- 进入某一层
+	void enterFloor(int act, int floorInAct)
 	{
-		Vector2 spawn{};
-		generateDungeon(gMap, spawn);
+		gAct = act;
+		gFloorInAct = floorInAct;
+		gFloor = (act - 1) * kFloorsPerAct + floorInAct;
 
+		bool bossFloor = isBossFloor(floorInAct);
+
+		Vector2 spawn{};
+		generateDungeon(gMap, spawn, bossFloor);
+
+		// 只重置位置与血量，金币 / 击杀 / 章节进度保留
+		int keepCoins = gPlayer.coins;
 		gPlayer = Player{};
+		gPlayer.coins = keepCoins;
 		gPlayer.pos = spawn;
 		gPlayer.hp = kPlayerMaxHp;
 
-		spawnEntities(floorIndex);
+		spawnEntities(act, floorInAct);
 
 		int fogCount = gMap.w * gMap.h;
 		gVisible.assign(fogCount, 0);
 		gExplored.assign(fogCount, 0);
-		lastPX = -999; lastPY = -999;
+		lastPX = -999;
+		lastPY = -999;
 		refreshFOV(true);
 
-		// 敌人：越深越多，每种史莱姆轮换
-		int enemyCount = 0;
-		for (int i = 0; i < enemyCount; i++)
-		{
-			int tx = 0, ty = 0;
-			for (int tries = 0; tries < 200; tries++)
-			{
-				tx = 1 + rand() % (gMap.w - 2);
-				ty = 1 + rand() % (gMap.h - 2);
-				Block* b = gMap.getBlockSafe(tx, ty);
-				if (!b || b->type != Block::air) { continue; }
-				Vector2 p{ tx + 0.5f, ty + 0.5f };
-				if (dist2(p, spawn) < 36.0f) { continue; }   // 出生点附近不放
-				break;
-			}
-
-			Enemy e;
-			e.pos = { tx + 0.5f, ty + 0.5f };
-			e.type = i % 4;
-			e.hp = 30 + (floorIndex - 1) * 8;
-			gEnemies.push_back(e);
-		}
-
-		// 金币：每个房间 2 枚
-		for (int i = 0; i < 40; i++)
-		{
-			int tx = 1 + rand() % (gMap.w - 2);
-			int ty = 1 + rand() % (gMap.h - 2);
-			Block* b = gMap.getBlockSafe(tx, ty);
-			if (!b || b->type != Block::air) { continue; }
-			gCoins.push_back(Coin{ { tx + 0.5f, ty + 0.5f }, (float)(rand() % 100) / 100.0f });
-		}
-
 		gCam.offset = { GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f };
-		gCam.zoom = gSettings.zoom;
+		gCam.zoom = bossFloor ? (gSettings.zoom * 0.62f) : gSettings.zoom;
 		gCam.rotation = 0.0f;
 
-		setMsg(TextFormat("第 %d 层", floorIndex), 2.0f);
+		if (act > kActs)
+		{
+			setMsg("最终决战 —— 击败远古之影", 2.5f);
+		}
+		else if (bossFloor)
+		{
+			setMsg(TextFormat("第 %d 章 · 首领层", act), 2.5f);
+		}
+		else
+		{
+			setMsg(TextFormat("第 %d 章 · 第 %d 层", act, floorInAct), 2.0f);
+		}
+	}
+
+	// 打完 Boss：进下一章 / 通关
+	void onBossDefeated()
+	{
+		if (gAct > kActs)
+		{
+			gVictory = true;
+			setMsg("通关！", 5.0f);
+			return;
+		}
+
+		if (gAct == kActs)
+		{
+			enterFloor(kActs + 1, 1);      // 最终 Boss
+			return;
+		}
+
+		enterFloor(gAct + 1, 1);
+		setMsg(TextFormat("进入第 %d 章", gAct), 2.5f);
 	}
 
 	// ---------------------------------------------------------------- 绘制
@@ -349,12 +448,19 @@ namespace
 				Block& b = gMap.getBlocUnsafe(x, y);
 				bool isWall = (b.type == Block::stoneBricks);
 
+				// 按章节选贴图：1 章 floor1/wall1，2 章 floor2/wall2，3 章 floor3/wall3，最终层 floor4
+				Texture2D texFloor = assetManager.floor;
+				Texture2D texWall = assetManager.wall;
+				if (gAct == 2) { texFloor = assetManager.floor2; texWall = assetManager.wall2; }
+				else if (gAct == 3) { texFloor = assetManager.floor3; texWall = assetManager.wall3; }
+				else if (gAct > 3) { texFloor = assetManager.floor4; texWall = assetManager.wall4; }
+
 				// 可见 = 正常；探索过但看不见 = 压暗
 				Color tint;
-				if (isWall) { tint = vis ? Color{ 62, 64, 82, 255 } : Color{ 26, 27, 35, 255 }; }
-				else        { tint = vis ? Color{ 208, 203, 188, 255 } : Color{ 74, 74, 70, 255 }; }
+				if (isWall) { tint = vis ? Color{ 120, 90, 90, 255 } : Color{ 40, 30, 32, 255 }; }
+				else        { tint = vis ? Color{ 210, 200, 190, 255 } : Color{ 74, 70, 66, 255 }; }
 
-				DrawTexturePro(isWall ? assetManager.wall : assetManager.floor,
+				DrawTexturePro(isWall ? texWall : texFloor,
 				               one,
 				               { (float)x, (float)y, 1.0f, 1.0f },
 				               { 0.0f, 0.0f }, 0.0f, tint);
@@ -423,10 +529,13 @@ namespace
 			Texture2D tex = assetManager.enemyWalk[e.type];
 			int frame = (int)(e.anim * 8.0f) % 6;
 			Rectangle src{ (float)(frame * 32), 0.0f, 32.0f, 32.0f };
-			Color tint = (e.hurt > 0.0f) ? RED : WHITE;
 
+			Color tint = (e.hurt > 0.0f) ? RED : WHITE;
+			if (e.boss) { tint = (e.hurt > 0.0f) ? Color{ 255, 160, 160, 255 } : Color{ 255, 210, 210, 255 }; }
+
+			float size = e.boss ? 2.6f : 1.0f;
 			DrawTexturePro(tex, src,
-			               { e.pos.x - 0.5f, e.pos.y - 0.7f, 1.0f, 1.0f },
+			               { e.pos.x - size * 0.5f, e.pos.y - size * 0.7f, size, size },
 			               { 0.0f, 0.0f }, 0.0f, tint);
 		}
 	}
@@ -565,8 +674,16 @@ namespace
 			{
 				sfxPlay(SFX_DEATH, gSettings.volume * 0.6f);
 				gKills++;
-				gPlayer.coins += 2;
+				gPlayer.coins += e.boss ? 30 : 2;
+
+				bool wasBoss = e.boss;
 				gEnemies.erase(gEnemies.begin() + (long)i);
+
+				if (wasBoss)
+				{
+					onBossDefeated();
+					return;              // 地图已换，别再遍历旧容器
+				}
 				continue;
 			}
 			i++;
@@ -610,8 +727,7 @@ namespace
 				if (b->type == Block::door)
 				{
 					sfxPlay(SFX_DESCEND, gSettings.volume);
-					gFloor++;
-					resetFloor(gFloor);
+					enterFloor(gAct, gFloorInAct + 1);
 					return;
 				}
 				if (b->type == Block::woodenChest)
@@ -628,33 +744,105 @@ namespace
 
 	void drawHUD()
 	{
-		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Always);   // 0 = 高度自适应
-		ImGui::Begin("Dungeon Echo");
-		ImGui::Text("第 %d 层", gFloor);
-		ImGui::Text("HP %d / %d", gPlayer.hp, kPlayerMaxHp);
-		ImGui::ProgressBar((float)gPlayer.hp / (float)kPlayerMaxHp, ImVec2(-1, 12), "");
-		ImGui::Text("金币 %d    击杀 %d    敌人 %d", gPlayer.coins, gKills, (int)gEnemies.size());
-		ImGui::Separator();
-		ImGui::TextDisabled("WASD 移动    J/空格 攻击");
-		ImGui::TextDisabled("E 宝箱/活板门   F5 存  F9 读  F8 新  F10 设置");
-		if (gMsgTimer > 0.0f)
-		{
-			ImGui::Separator();
-			ImGui::TextUnformatted(gMsg);
-		}
-		ImGui::End();
+		ImGuiIO& io = ImGui::GetIO();
+		const float W = io.DisplaySize.x;
+		const float H = io.DisplaySize.y;
+		char buf[96];
 
-		// ---------------- 小地图 ----------------
+		ImGui::SetNextWindowPos(ImVec2(0, 0));
+		ImGui::SetNextWindowSize(ImVec2(W, H));
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+		ImGui::Begin("##hud", nullptr,
+		             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+		             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+		             ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs |
+		             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+		ImDrawList* dl = ImGui::GetWindowDrawList();
+		ImFont* font = ImGui::GetFont();
+
+		// ---------------- 左上：状态面板 ----------------
+		dl->AddRectFilled({ 16, 16 }, { 306, 108 }, IM_COL32(9, 11, 18, 210), 10.0f);
+		dl->AddRect({ 16, 16 }, { 306, 108 }, IM_COL32(80, 88, 122, 255), 10.0f, 0, 2.0f);
+
+		// 血条
+		float frac = (float)gPlayer.hp / (float)kPlayerMaxHp;
+		if (frac < 0.0f) { frac = 0.0f; }
+		const float barL = 36.0f, barR = 286.0f, barT = 34.0f, barB = 58.0f;
+		dl->AddRectFilled({ barL, barT }, { barR, barB }, IM_COL32(44, 18, 22, 255), 5.0f);
+		dl->AddRectFilled({ barL, barT }, { barL + (barR - barL) * frac, barB },
+		                  frac > 0.35f ? IM_COL32(206, 62, 62, 255) : IM_COL32(232, 128, 44, 255), 5.0f);
+		dl->AddRect({ barL, barT }, { barR, barB }, IM_COL32(122, 62, 62, 255), 5.0f);
+
+		snprintf(buf, sizeof(buf), "HP  %d / %d", gPlayer.hp, kPlayerMaxHp);
+		ImVec2 ts = ImGui::CalcTextSize(buf);
+		dl->AddText({ barL + ((barR - barL) - ts.x) * 0.5f, barT + 1.0f },
+		            IM_COL32(248, 242, 236, 255), buf);
+
+		// 金币 + 击杀 + 敌人
+		if (assetManager.coin.id != 0)
+		{
+			dl->AddImage((ImTextureID)(intptr_t)assetManager.coin.id,
+			             ImVec2(36, 68), ImVec2(60, 92));
+		}
+		snprintf(buf, sizeof(buf), "%d", gPlayer.coins);
+		dl->AddText({ 68, 70 }, IM_COL32(250, 214, 110, 255), buf);
+
+		snprintf(buf, sizeof(buf), "击杀 %d", gKills);
+		dl->AddText({ 140, 70 }, IM_COL32(198, 204, 218, 255), buf);
+
+		snprintf(buf, sizeof(buf), "敌人 %d", (int)gEnemies.size());
+		dl->AddText({ 226, 70 }, IM_COL32(198, 204, 218, 255), buf);
+
+		// ---------------- 顶部居中：层数 ----------------
+		if (gAct > kActs) { snprintf(buf, sizeof(buf), "最终决战"); }
+		else { snprintf(buf, sizeof(buf), "第 %d 章 · 第 %d 层", gAct, gFloorInAct); }
+		ts = ImGui::CalcTextSize(buf);
+		dl->AddText(font, 26.0f, ImVec2((W - ts.x * 26.0f / ts.y * 0.72f) * 0.5f + 1, 17),
+		            IM_COL32(0, 0, 0, 190), buf);
+		dl->AddText(font, 26.0f, ImVec2((W - ts.x * 26.0f / ts.y * 0.72f) * 0.5f, 16),
+		            IM_COL32(246, 236, 210, 255), buf);
+
+		// ---------------- 顶部：Boss 血条 ----------------
+		{
+			float bossFrac = -1.0f;
+			for (const auto& e : gEnemies)
+			{
+				if (e.boss) { bossFrac = (e.maxHp > 0) ? (float)e.hp / (float)e.maxHp : 0.0f; break; }
+			}
+
+			if (bossFrac >= 0.0f)
+			{
+				float bw = 520.0f;
+				float bx = (W - bw) * 0.5f;
+				float by = 66.0f;
+
+				if (bossFrac < 0.0f) { bossFrac = 0.0f; }
+
+				dl->AddRectFilled({ bx - 4, by - 4 }, { bx + bw + 4, by + 20 }, IM_COL32(0, 0, 0, 190), 7.0f);
+				dl->AddRectFilled({ bx, by }, { bx + bw, by + 16 }, IM_COL32(46, 16, 26, 255), 6.0f);
+				dl->AddRectFilled({ bx, by }, { bx + bw * bossFrac, by + 16 }, IM_COL32(198, 48, 118, 255), 6.0f);
+				dl->AddRect({ bx, by }, { bx + bw, by + 16 }, IM_COL32(150, 90, 120, 255), 6.0f);
+
+				const char* nm = (gAct > kActs) ? "远古之影" : "章节首领";
+				ImVec2 ns = ImGui::CalcTextSize(nm);
+				dl->AddText({ (W - ns.x) * 0.5f, by - 22.0f }, IM_COL32(250, 180, 205, 255), nm);
+			}
+		}
+
+		// ---------------- 右上：小地图 ----------------
 		if (gSettings.showMinimap)
 		{
-		ImGui::SetNextWindowPos(ImVec2(GetScreenWidth() - 250.0f, 20.0f), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(230, 175), ImGuiCond_FirstUseEver);
-		ImGui::Begin("小地图");
-		{
-			ImDrawList* dl = ImGui::GetWindowDrawList();
-			ImVec2 o = ImGui::GetCursorScreenPos();
-			float cell = 3.0f;
+			const float cell = 3.0f;
+			const float mw = gMap.w * cell;
+			const float mh = gMap.h * cell;
+			ImVec2 m0(W - mw - 26.0f, 16.0f);
+			ImVec2 m1(m0.x + mw + 10.0f, m0.y + mh + 10.0f);
+
+			dl->AddRectFilled(m0, m1, IM_COL32(8, 9, 14, 225), 8.0f);
+			dl->AddRect(m0, m1, IM_COL32(80, 88, 122, 255), 8.0f, 0, 2.0f);
+
+			ImVec2 o(m0.x + 5.0f, m0.y + 5.0f);
 
 			for (int y = 0; y < gMap.h; y++)
 			{
@@ -667,43 +855,93 @@ namespace
 					bool vis = (gVisible[idx] != 0);
 
 					ImU32 col;
-					if (wall) { col = vis ? IM_COL32(120, 122, 150, 255) : IM_COL32(45, 46, 58, 255); }
-					else      { col = vis ? IM_COL32(196, 192, 176, 255) : IM_COL32(80, 80, 88, 255); }
+					if (wall) { col = vis ? IM_COL32(118, 122, 150, 255) : IM_COL32(44, 45, 58, 255); }
+					else      { col = vis ? IM_COL32(198, 194, 178, 255) : IM_COL32(82, 82, 92, 255); }
 
-					dl->AddRectFilled(ImVec2(o.x + x * cell, o.y + y * cell),
-					                  ImVec2(o.x + x * cell + cell - 0.6f, o.y + y * cell + cell - 0.6f), col);
+					ImVec2 a(o.x + x * cell, o.y + y * cell);
+					dl->AddRectFilled(a, ImVec2(a.x + cell - 0.6f, a.y + cell - 0.6f), col);
 
-					if (gMap.mapData[idx].type == Block::door && gExplored[idx])
+					if (gMap.mapData[idx].type == Block::door)
 					{
-						dl->AddRectFilled(ImVec2(o.x + x * cell, o.y + y * cell),
-						                  ImVec2(o.x + x * cell + cell, o.y + y * cell + cell),
-						                  IM_COL32(240, 200, 60, 255));
+						dl->AddRectFilled(a, ImVec2(a.x + cell, a.y + cell), IM_COL32(240, 200, 60, 255));
 					}
 				}
 			}
 
-			// 可见的敌人
-			for (auto& e : gEnemies)
+			for (const auto& e : gEnemies)
 			{
 				int ei = (int)floorf(e.pos.y) * gMap.w + (int)floorf(e.pos.x);
 				if (ei < 0 || ei >= (int)gVisible.size() || !gVisible[ei]) { continue; }
-				dl->AddRectFilled(ImVec2(o.x + floorf(e.pos.x) * cell + 0.5f, o.y + floorf(e.pos.y) * cell + 0.5f),
-				                  ImVec2(o.x + floorf(e.pos.x) * cell + cell, o.y + floorf(e.pos.y) * cell + cell),
-				                  IM_COL32(230, 70, 70, 255));
+				ImVec2 a(o.x + floorf(e.pos.x) * cell, o.y + floorf(e.pos.y) * cell);
+				dl->AddRectFilled(a, ImVec2(a.x + cell, a.y + cell), IM_COL32(226, 70, 70, 255));
 			}
 
-			// 玩家
-			dl->AddRectFilled(ImVec2(o.x + floorf(gPlayer.pos.x) * cell - 0.5f,
-			                         o.y + floorf(gPlayer.pos.y) * cell - 0.5f),
-			                  ImVec2(o.x + floorf(gPlayer.pos.x) * cell + cell + 0.5f,
-			                         o.y + floorf(gPlayer.pos.y) * cell + cell + 0.5f),
-			                  IM_COL32(90, 230, 130, 255));
-
-			ImGui::Dummy(ImVec2(gMap.w * cell, gMap.h * cell));
+			{
+				ImVec2 a(o.x + floorf(gPlayer.pos.x) * cell - 1.0f,
+				         o.y + floorf(gPlayer.pos.y) * cell - 1.0f);
+				dl->AddRectFilled(a, ImVec2(a.x + cell + 2.0f, a.y + cell + 2.0f),
+				                  IM_COL32(90, 232, 132, 255));
+			}
 		}
-		ImGui::End();
-		}   // showMinimap
 
+		// ---------------- 底部提示 ----------------
+		ImU32 dim = IM_COL32(170, 175, 190, 120);
+		dl->AddText({ 18, H - 84 }, dim, "WASD 移动    J/空格 攻击    E 开箱/下楼");
+		dl->AddText({ 18, H - 64 }, dim, "F5 保存   F9 读档   F8 新游戏   F10 设置");
+
+		// ---------------- 消息提示 ----------------
+		if (gMsgTimer > 0.0f)
+		{
+			float a = (gMsgTimer > 1.0f) ? 1.0f : gMsgTimer;
+			ts = ImGui::CalcTextSize(gMsg);
+			ImVec2 t0((W - ts.x) * 0.5f - 16.0f, H - 150.0f);
+			ImVec2 t1((W + ts.x) * 0.5f + 16.0f, H - 150.0f + ts.y + 12.0f);
+			dl->AddRectFilled(t0, t1, IM_COL32(0, 0, 0, (int)(170 * a)), 8.0f);
+			dl->AddText({ t0.x + 16.0f, t0.y + 6.0f }, IM_COL32(255, 240, 205, (int)(255 * a)), gMsg);
+		}
+
+		// ---------------- 通关覆盖层 ----------------
+		if (gVictory)
+		{
+			dl->AddRectFilled({ 0, 0 }, { W, H }, IM_COL32(6, 8, 14, 205));
+
+			const char* title = "通  关  !";
+			ts = ImGui::CalcTextSize(title);
+			float big = 52.0f;
+			float tw = ts.x * big / ts.y;
+			dl->AddText(font, big, ImVec2((W - tw) * 0.5f + 2, H * 0.28f + 2),
+			            IM_COL32(0, 0, 0, 220), title);
+			dl->AddText(font, big, ImVec2((W - tw) * 0.5f, H * 0.28f),
+			            IM_COL32(250, 210, 110, 255), title);
+
+			snprintf(buf, sizeof(buf), "击败远古之影，击杀 %d，金币 %d", gKills, gPlayer.coins);
+			ts = ImGui::CalcTextSize(buf);
+			dl->AddText({ (W - ts.x) * 0.5f, H * 0.42f }, IM_COL32(230, 230, 236, 255), buf);
+		}
+
+		// ---------------- 死亡覆盖层 ----------------
+		if (gDead)
+		{
+			dl->AddRectFilled({ 0, 0 }, { W, H }, IM_COL32(6, 6, 10, 195));
+
+			const char* title = "你  死  了";
+			ts = ImGui::CalcTextSize(title);
+			float big = 44.0f;
+			float tw = ts.x * big / ts.y;
+			dl->AddText(font, big, ImVec2((W - tw) * 0.5f + 2, H * 0.30f + 2),
+			            IM_COL32(0, 0, 0, 220), title);
+			dl->AddText(font, big, ImVec2((W - tw) * 0.5f, H * 0.30f),
+			            IM_COL32(232, 72, 72, 255), title);
+
+			snprintf(buf, sizeof(buf), "到达第 %d 层    击杀 %d    金币 %d", gFloor, gKills, gPlayer.coins);
+			ts = ImGui::CalcTextSize(buf);
+			dl->AddText({ (W - ts.x) * 0.5f, H * 0.42f }, IM_COL32(226, 226, 232, 255), buf);
+		}
+
+		ImGui::End();
+		ImGui::PopStyleColor();
+
+		// ---------------- 设置窗口（F10）----------------
 		if (gSettingsOpen)
 		{
 			ImGui::SetNextWindowPos(ImVec2(20, 330), ImGuiCond_FirstUseEver);
@@ -723,21 +961,22 @@ namespace
 			ImGui::End();
 		}
 
-		if (gDead)
+		// ---------------- 死亡 / 通关按钮 ----------------
+		if (gDead || gVictory)
 		{
-			ImGui::SetNextWindowSize(ImVec2(320, 140), ImGuiCond_Always);
-			ImGui::SetNextWindowPos(ImVec2(GetScreenWidth() / 2.0f - 160,
-			                               GetScreenHeight() / 2.0f - 70), ImGuiCond_Always);
-			ImGui::Begin("你死了", nullptr,
-			             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-			             ImGuiWindowFlags_NoCollapse);
-			ImGui::Text("到达第 %d 层，击杀 %d，金币 %d", gFloor, gKills, gPlayer.coins);
-			if (ImGui::Button("重新开始 (R)", ImVec2(-1, 34)))
+			ImGui::SetNextWindowPos(ImVec2(W * 0.5f - 120.0f, H * 0.52f));
+			ImGui::SetNextWindowSize(ImVec2(240, 0));
+			ImGui::Begin("##deadbtn", nullptr,
+			             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+			             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+			             ImGuiWindowFlags_AlwaysAutoResize);
+			if (ImGui::Button("重新开始  (R)", ImVec2(-1, 42)))
 			{
-				gFloor = 1;
 				gKills = 0;
 				gDead = false;
-				resetFloor(1);
+				gVictory = false;
+				gPlayer.coins = 0;
+				enterFloor(1, 1);
 			}
 			ImGui::End();
 		}
@@ -753,10 +992,10 @@ bool initGame()
 	InitAudioDevice();
 	sfxInit();
 
-	gFloor = 1;
 	gKills = 0;
 	gDead = false;
-	resetFloor(1);
+	gVictory = false;
+	enterFloor(1, 1);
 
 	// 有存档就接着玩
 	doLoad(true);
@@ -774,10 +1013,11 @@ bool updateGame()
 	{
 		if (IsKeyPressed(KEY_R))
 		{
-			gFloor = 1;
 			gKills = 0;
 			gDead = false;
-			resetFloor(1);
+			gVictory = false;
+			gPlayer.coins = 0;
+			enterFloor(1, 1);
 		}
 	}
 	else
@@ -786,10 +1026,11 @@ bool updateGame()
 		if (IsKeyPressed(KEY_F9)) { doLoad(); }
 		if (IsKeyPressed(KEY_F8))
 		{
-			gFloor = 1;
 			gKills = 0;
 			gDead = false;
-			resetFloor(1);
+			gVictory = false;
+			gPlayer.coins = 0;
+			enterFloor(1, 1);
 			setMsg("新游戏", 1.5f);
 		}
 

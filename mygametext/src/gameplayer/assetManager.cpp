@@ -1,4 +1,4 @@
-#include "assetManager.h"
+﻿#include "assetManager.h"
 
 #include <string>
 
@@ -40,6 +40,12 @@ void AssetManager::loadAll()
 
 	floor   = loadTex("rogue/tiles/floor1.png");
 	wall    = loadTex("rogue/tiles/wall1.png");
+	floor2  = loadTex("rogue/tiles/floor2.png");
+	wall2   = loadTex("rogue/tiles/wall2.png");
+	floor3  = loadTex("rogue/tiles/floor3.png");
+	wall3   = loadTex("rogue/tiles/wall3.png");
+	floor4  = loadTex("rogue/tiles/floor4.png");
+	wall4   = loadTex("rogue/tiles/wall3.png");
 	trapdoor = loadTex("rogue/objects/trapdoor.png");
 	chest   = loadTex("rogue/objects/chest.png");
 	coin    = loadTex("rogue/ui/icon_coin.png");
@@ -60,6 +66,12 @@ void AssetManager::unloadAll()
 	}
 	UnloadTexture(floor);
 	UnloadTexture(wall);
+	UnloadTexture(floor2);
+	UnloadTexture(wall2);
+	UnloadTexture(floor3);
+	UnloadTexture(wall3);
+	UnloadTexture(floor4);
+	UnloadTexture(wall4);
 	UnloadTexture(trapdoor);
 	UnloadTexture(chest);
 	UnloadTexture(coin);

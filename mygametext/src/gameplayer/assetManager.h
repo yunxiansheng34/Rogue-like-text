@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <raylib.h>
 
@@ -14,8 +14,14 @@ struct AssetManager
 	Texture2D enemyWalk[4] = {};
 
 	// 地形与道具
-	Texture2D floor = {};
+	Texture2D floor = {};      // 第 1 章
 	Texture2D wall = {};
+	Texture2D floor2 = {};     // 第 2 章
+	Texture2D wall2 = {};
+	Texture2D floor3 = {};     // 第 3 章
+	Texture2D wall3 = {};
+	Texture2D floor4 = {};     // 最终 Boss 场
+	Texture2D wall4 = {};
 	Texture2D trapdoor = {};
 	Texture2D chest = {};
 	Texture2D coin = {};

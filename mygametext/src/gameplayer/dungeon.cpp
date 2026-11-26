@@ -1,4 +1,4 @@
-#include "dungeon.h"
+﻿#include "dungeon.h"
 #include "blocks.h"
 #include "random_stuff.h"
 
@@ -51,7 +51,7 @@ namespace
 	}
 }
 
-void generateDungeon(GameMap& map, Vector2& spawnPos)
+void generateDungeon(GameMap& map, Vector2& spawnPos, bool bossFloor)
 {
 	const int W = 64;
 	const int H = 40;
@@ -62,6 +62,25 @@ void generateDungeon(GameMap& map, Vector2& spawnPos)
 	for (int y = 0; y < H; y++)
 		for (int x = 0; x < W; x++)
 			map.getBlocUnsafe(x, y).type = Block::stoneBricks;
+
+	// ---- Boss 层：一个大竞技场，四周留墙 ----
+	if (bossFloor)
+	{
+		const int rw = 34, rh = 18;
+		int rx = (W - rw) / 2;
+		int ry = (H - rh) / 2;
+		carveRect(map, rx, ry, rw, rh);
+
+		// 四角留一点装饰柱
+		for (int i = 0; i < 4; i++)
+		{
+			map.getBlocUnsafe(rx + 4 + i * 8, ry + 4).type = Block::stoneBricks;
+			map.getBlocUnsafe(rx + 4 + i * 8, ry + rh - 5).type = Block::stoneBricks;
+		}
+
+		spawnPos = { (float)(rx + rw / 2) + 0.5f, (float)(ry + rh - 3) + 0.5f };
+		return;
+	}
 
 	std::ranlux24_base rng((unsigned)std::random_device{}());
 
